@@ -1,5 +1,4 @@
 import random
-
 from locust import TaskSet, task, between, User, FastHttpUser
 import faker
 
@@ -40,6 +39,7 @@ class UserBehavior(TaskSet):
     def on_start(self):
         self.signup()
         self.create_profile()
+        self.create_prompt()
 
     def signup(self):
         with self.client.post("/api/v0/auth/signup", json={
@@ -70,22 +70,30 @@ class UserBehavior(TaskSet):
                              "smokes": habits[random.randint(0, len(habits) - 1)],
                          }, catch_response=True)
 
-    @task
+    @task(1)
     def login(self):
-        response = self.client.post("/api/v0/auth/login", json={
+        with self.client.post("/api/v0/auth/login", json={
             "email": self.email,
             "password": self.password
-        })
-        self.token = response.json()['data']['access_token']
-        self.refresh_token = response.json()['data']['refresh_token']
-        self.user_id = response.json()['data']['id']
+        }) as response:
+            if response.status_code != 200:
+                print("login", response.json(), response.status_code)
+            else:
+                self.token = response.json()['data']['access_token']
+                self.refresh_token = response.json()['data']['refresh_token']
+                self.user_id = response.json()['data']['id']
 
-    @task
+    @task(2)
     def refresh(self):
-        response = self.client.get("/api/v0/auth/refresh", headers={"Authorization": f"Bearer {self.refresh_token}"})
-        self.token = response.json()['data']['access_token']
-        self.refresh_token = response.json()['data']['refresh_token']
-        self.user_id = response.json()['data']['id']
+        with self.client.get("/api/v0/auth/refresh",
+                             headers={"Authorization": f"Bearer {self.refresh_token}"}) as response:
+            if response.status_code != 200:
+                print("refresh", response.status_code)
+                print("refresh", response.json(), response.status_code)
+            else:
+                self.token = response.json()['data']['access_token']
+                self.refresh_token = response.json()['data']['refresh_token']
+                self.user_id = response.json()['data']['id']
 
     @task(5)
     def get_profile(self):
@@ -94,9 +102,10 @@ class UserBehavior(TaskSet):
             if response.status_code != 200:
                 print("get_profile", response.json(), response.status_code)
 
-    @task
+    @task(2)
     def update_profile(self):
-        with self.client.put(f"/api/v0/users/{self.user_id}/profile", headers={"Authorization": f"Bearer {self.token}"},
+        with self.client.put(f"/api/v0/users/{self.user_id}/profile",
+                             headers={"Authorization": f"Bearer {self.token}"},
                              json={
                                  "first_name": self.first_name,
                                  "last_name": self.last_name,
@@ -114,7 +123,7 @@ class UserBehavior(TaskSet):
             if response.status_code != 200:
                 print("update_profile", response.json(), response.status_code)
 
-    @task
+    @task(2)
     def create_prompt(self):
         question = fake_gen.sentence()
         while question in self.allPrompts:
@@ -127,7 +136,7 @@ class UserBehavior(TaskSet):
             })
         self.prompt_ids.append(response.json()['data']['id'])
 
-    @task(2)
+    @task(3)
     def get_prompts(self):
         self.client.get(f"/api/v0/users/{self.user_id}/prompts", headers={"Authorization": f"Bearer {self.token}"})
 
@@ -140,9 +149,10 @@ class UserBehavior(TaskSet):
 
     @task(3)
     def get_full_profile(self):
-        self.client.get(f"/api/v0/users/{self.user_id}/profile/full", headers={"Authorization": f"Bearer {self.token}"})
+        self.client.get(f"/api/v0/users/{self.user_id}/profile/full",
+                        headers={"Authorization": f"Bearer {self.token}"})
 
-    @task
+    @task(2)
     def update_prompt(self):
         question = fake_gen.sentence()
         while question in self.allPrompts:
@@ -155,9 +165,8 @@ class UserBehavior(TaskSet):
                 "type": "text"
             })
 
-
 class WebsiteUser(FastHttpUser):
-    network_timeout = 5.0
-    connection_timeout = 5.0
+    network_timeout = 120.0
+    connection_timeout = 120.0
     tasks = [UserBehavior]
-    wait_time = between(0.01, 0.02)
+    wait_time = between(0.001, 0.002)
